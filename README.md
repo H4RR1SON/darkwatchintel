@@ -103,15 +103,6 @@ python3 cti_manager.py . --clean --beautify --dry-run
 python3 cti_manager.py . --beautify --file ransomware_gang.md
 ```
 
-### Legacy Cleaner (`cti_cleaner.py`)
-
-Original cleaning script for backward compatibility:
-
-```bash
-python3 cti_cleaner.py . --dry-run
-python3 cti_cleaner.py .  # Apply changes
-```
-
 ---
 
 ## 📋 Data Format
