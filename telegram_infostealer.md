@@ -1,6 +1,6 @@
 | Telegram                               | Status    | Name                                               |
 | -------------------------------------- | --------- | -------------------------------------------------- |
-| https://t.me/+fcxhFl9JSRE3YTdi         | ⚪ UNKNOWN | HUBHEAD Logs                                       |
+| https://t.me/+fcxhFl9JSRE3YTdi         | 🟡 FLOOD   | HUBHEAD Logs                                       |
 | https://t.me/+V_oM-vx0YnSN7nzH         | 🟢 VALID   | Log Leaks Group                                    |
 | https://t.me/berserklogs               | 🟢 ONLINE  | Redline Stealer                                    |
 | https://t.me/BorwitaFreeLogs           | 🟢 ONLINE  | Redline Data Leaks                                 |
