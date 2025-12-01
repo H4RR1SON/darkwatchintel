@@ -21,7 +21,7 @@ import base64
 import asyncio
 import argparse
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 try:
@@ -144,7 +144,7 @@ async def check_telegram_url(client: 'TelegramClient', url: str) -> Dict:
         result = {'status': 'INVALID', 'error': 'Could not parse URL'}
     
     result['url'] = url
-    result['checked_at'] = datetime.utcnow().isoformat()
+    result['checked_at'] = datetime.now(timezone.utc).isoformat()
     return result
 
 
@@ -154,9 +154,41 @@ def load_session_from_env() -> bool:
     if session_b64:
         try:
             session_data = base64.b64decode(session_b64)
+            
+            # Validate it's a proper SQLite file
+            if len(session_data) < 20000:  # Telethon sessions are typically 28KB+
+                print(f"⚠️  Session data seems truncated ({len(session_data)} bytes)")
+                print("   A valid session should be ~28KB. Please re-export.")
+                return False
+            
+            if not session_data.startswith(b'SQLite format 3'):
+                print("❌ Session data is not a valid SQLite database")
+                return False
+            
+            # Remove any old corrupted session first
+            if os.path.exists(SESSION_FILE):
+                os.remove(SESSION_FILE)
+            
             with open(SESSION_FILE, 'wb') as f:
                 f.write(session_data)
-            print(f"✅ Session loaded from {SESSION_B64_ENV}")
+            
+            # Verify the file is readable
+            import sqlite3
+            try:
+                conn = sqlite3.connect(SESSION_FILE)
+                cursor = conn.cursor()
+                cursor.execute('SELECT * FROM sessions')
+                rows = cursor.fetchall()
+                conn.close()
+                if not rows:
+                    print("❌ Session file has no session data")
+                    return False
+            except sqlite3.Error as e:
+                print(f"❌ Session file corrupted: {e}")
+                os.remove(SESSION_FILE)
+                return False
+            
+            print(f"✅ Session loaded from {SESSION_B64_ENV} ({len(session_data)} bytes)")
             return True
         except Exception as e:
             print(f"❌ Failed to load session: {e}")
@@ -270,6 +302,125 @@ def extract_telegram_urls_from_markdown(filepath: str) -> List[str]:
     return urls
 
 
+def update_markdown_with_results(filepath: str, results: List[Dict]) -> int:
+    """
+    Update a markdown file with check results.
+    Returns the number of rows updated.
+    """
+    if not results:
+        return 0
+    
+    # Build lookup by URL
+    results_map = {r['url']: r for r in results}
+    
+    with open(filepath, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    
+    updated_count = 0
+    new_lines = []
+    
+    for line in lines:
+        # Check if this line contains a Telegram URL
+        url_match = re.search(r'(https?://t\.me/[^\s\)\]|>]+)', line)
+        if url_match:
+            url = url_match.group(1).rstrip('|').rstrip(')')
+            if url in results_map:
+                result = results_map[url]
+                status = result.get('status', 'UNKNOWN')
+                
+                # Map status to emoji format
+                status_map = {
+                    'ONLINE': '🟢 ONLINE',
+                    'VALID': '🟢 VALID',
+                    'OFFLINE': '🔴 OFFLINE',
+                    'EXPIRED': '🔴 EXPIRED',
+                    'ERROR': '🟡 ERROR',
+                    'FLOOD': '🟡 FLOOD',
+                    'SEIZED': '🔵 SEIZED',
+                }
+                new_status = status_map.get(status, f'⚪ {status}')
+                
+                # Update status in line (between first two pipes after URL)
+                parts = line.split('|')
+                if len(parts) >= 3:
+                    # parts[0] is empty, parts[1] is URL, parts[2] is status
+                    old_status = parts[2].strip()
+                    if old_status != new_status:
+                        parts[2] = f' {new_status} '
+                        line = '|'.join(parts)
+                        updated_count += 1
+        
+        new_lines.append(line)
+    
+    if updated_count > 0:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.writelines(new_lines)
+    
+    return updated_count
+
+
+def print_results_summary(results: List[Dict]):
+    """Print a detailed summary of check results"""
+    print("\n" + "=" * 60)
+    print("📊 CHECK RESULTS SUMMARY")
+    print("=" * 60)
+    
+    # Group by status
+    by_status = {}
+    for r in results:
+        s = r.get('status', 'UNKNOWN')
+        if s not in by_status:
+            by_status[s] = []
+        by_status[s].append(r)
+    
+    for status, items in sorted(by_status.items()):
+        emoji = {'ONLINE': '🟢', 'VALID': '🟢', 'OFFLINE': '🔴', 'EXPIRED': '🔴', 
+                 'ERROR': '🟡', 'FLOOD': '🟡', 'SEIZED': '🔵'}.get(status, '⚪')
+        print(f"\n{emoji} {status}: {len(items)}")
+        
+        # Show details for offline/expired
+        if status in ['OFFLINE', 'EXPIRED', 'ERROR']:
+            for item in items[:5]:  # Show first 5
+                print(f"   - {item['url'][:50]}...")
+            if len(items) > 5:
+                print(f"   ... and {len(items) - 5} more")
+    
+    # Show channels with member counts
+    with_members = [r for r in results if r.get('members')]
+    if with_members:
+        print(f"\n👥 Channels with member info: {len(with_members)}")
+        top_10 = sorted(with_members, key=lambda x: x.get('members', 0), reverse=True)[:10]
+        for r in top_10:
+            title = r.get('title', 'Unknown')[:30]
+            members = r.get('members', 0)
+            print(f"   {members:,} members - {title}")
+    
+    print("\n" + "=" * 60)
+
+
+def dry_run_check(url: str) -> Dict:
+    """Simulate a check without Telegram connection - for testing URL parsing"""
+    url_type, identifier = parse_telegram_url(url)
+    result = {
+        'url': url,
+        'parsed_type': url_type,
+        'identifier': identifier,
+        'checked_at': datetime.now(timezone.utc).isoformat(),
+    }
+    
+    if url_type == 'channel':
+        result['status'] = 'DRY_RUN'
+        result['note'] = f'Would check public channel: @{identifier}'
+    elif url_type == 'invite':
+        result['status'] = 'DRY_RUN'
+        result['note'] = f'Would check invite hash: {identifier}'
+    else:
+        result['status'] = 'INVALID'
+        result['error'] = 'Could not parse URL'
+    
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description='Telegram Channel Monitor')
     parser.add_argument('--setup', action='store_true', help='Setup session (interactive)')
@@ -277,6 +428,8 @@ def main():
     parser.add_argument('--check', type=str, help='Check URLs from markdown file')
     parser.add_argument('--url', type=str, help='Check single URL')
     parser.add_argument('--output', type=str, help='Output JSON file')
+    parser.add_argument('--dry-run', action='store_true', help='Test URL parsing without Telegram connection')
+    parser.add_argument('--validate-session', action='store_true', help='Validate session file/env var')
     
     args = parser.parse_args()
     
@@ -292,22 +445,71 @@ def main():
         if b64:
             print(b64)
     
+    elif args.validate_session:
+        print("🔍 Validating session...")
+        
+        # Check env var
+        session_b64 = os.environ.get(SESSION_B64_ENV)
+        if session_b64:
+            print(f"✅ {SESSION_B64_ENV} is set ({len(session_b64)} chars)")
+            
+            # Try to decode and validate
+            if load_session_from_env():
+                print("✅ Session loaded and validated successfully!")
+                
+                # Try to connect
+                if API_ID and API_HASH:
+                    async def test_connect():
+                        client = TelegramClient(SESSION_NAME, int(API_ID), API_HASH)
+                        await client.connect()
+                        if await client.is_user_authorized():
+                            me = await client.get_me()
+                            print(f"✅ Connected as: {me.first_name} (@{me.username})")
+                        else:
+                            print("❌ Session exists but user not authorized")
+                        await client.disconnect()
+                    asyncio.run(test_connect())
+            else:
+                print("❌ Session validation failed")
+        else:
+            print(f"❌ {SESSION_B64_ENV} not set")
+            if os.path.exists(SESSION_FILE):
+                print(f"✅ Local session file exists: {SESSION_FILE}")
+            else:
+                print(f"❌ No local session file: {SESSION_FILE}")
+    
     elif args.check:
         urls = extract_telegram_urls_from_markdown(args.check)
         print(f"📋 Found {len(urls)} Telegram URLs in {args.check}")
-        results = asyncio.run(run_checks(urls, args.output))
         
-        # Summary
-        statuses = {}
-        for r in results:
-            s = r.get('status', 'UNKNOWN')
-            statuses[s] = statuses.get(s, 0) + 1
-        print(f"\n📊 Summary: {statuses}")
+        if args.dry_run:
+            results = [dry_run_check(url) for url in urls]
+            if args.output:
+                with open(args.output, 'w') as f:
+                    json.dump(results, f, indent=2)
+                print(f"📁 Results saved to {args.output}")
+        else:
+            results = asyncio.run(run_checks(urls, args.output))
+            
+            # Update the markdown file with results
+            updated = update_markdown_with_results(args.check, results)
+            if updated:
+                print(f"✏️  Updated {updated} entries in {args.check}")
+        
+        # Print detailed summary
+        print_results_summary(results)
     
     elif args.url:
-        results = asyncio.run(run_checks([args.url], args.output))
-        if results:
-            print(json.dumps(results[0], indent=2))
+        if args.dry_run:
+            result = dry_run_check(args.url)
+            if args.output:
+                with open(args.output, 'w') as f:
+                    json.dump([result], f, indent=2)
+            print(json.dumps(result, indent=2))
+        else:
+            results = asyncio.run(run_checks([args.url], args.output))
+            if results:
+                print(json.dumps(results[0], indent=2))
     
     else:
         parser.print_help()
