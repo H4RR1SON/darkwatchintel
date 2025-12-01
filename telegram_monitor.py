@@ -173,48 +173,53 @@ async def check_telegram_url(client: 'TelegramClient', url: str) -> Dict:
 def load_session_from_env() -> bool:
     """Load session from base64 environment variable"""
     session_b64 = os.environ.get(SESSION_B64_ENV)
-    if session_b64:
+    if not session_b64:
+        print(f"⚠️  {SESSION_B64_ENV} environment variable not set")
+        return False
+    
+    try:
+        session_data = base64.b64decode(session_b64)
+        
+        # Validate it's a proper SQLite file
+        if len(session_data) < 20000:  # Telethon sessions are typically 28KB+
+            print(f"⚠️  Session data seems truncated ({len(session_data)} bytes)")
+            print("   A valid session should be ~28KB. Please re-export.")
+            return False
+        
+        if not session_data.startswith(b'SQLite format 3'):
+            print("❌ Session data is not a valid SQLite database")
+            return False
+        
+        # Remove any old corrupted session first
+        if os.path.exists(SESSION_FILE):
+            os.remove(SESSION_FILE)
+        
+        with open(SESSION_FILE, 'wb') as f:
+            f.write(session_data)
+        
+        # Verify the file is readable
+        import sqlite3
         try:
-            session_data = base64.b64decode(session_b64)
-            
-            # Validate it's a proper SQLite file
-            if len(session_data) < 20000:  # Telethon sessions are typically 28KB+
-                print(f"⚠️  Session data seems truncated ({len(session_data)} bytes)")
-                print("   A valid session should be ~28KB. Please re-export.")
+            conn = sqlite3.connect(SESSION_FILE)
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM sessions')
+            rows = cursor.fetchall()
+            conn.close()
+            if not rows:
+                print("❌ Session file has no session data")
                 return False
-            
-            if not session_data.startswith(b'SQLite format 3'):
-                print("❌ Session data is not a valid SQLite database")
-                return False
-            
-            # Remove any old corrupted session first
-            if os.path.exists(SESSION_FILE):
-                os.remove(SESSION_FILE)
-            
-            with open(SESSION_FILE, 'wb') as f:
-                f.write(session_data)
-            
-            # Verify the file is readable
-            import sqlite3
-            try:
-                conn = sqlite3.connect(SESSION_FILE)
-                cursor = conn.cursor()
-                cursor.execute('SELECT * FROM sessions')
-                rows = cursor.fetchall()
-                conn.close()
-                if not rows:
-                    print("❌ Session file has no session data")
-                    return False
-            except sqlite3.Error as e:
-                print(f"❌ Session file corrupted: {e}")
-                os.remove(SESSION_FILE)
-                return False
-            
-            print(f"✅ Session loaded from {SESSION_B64_ENV} ({len(session_data)} bytes)")
-            return True
-        except Exception as e:
-            print(f"❌ Failed to load session: {e}")
-    return False
+        except sqlite3.Error as e:
+            print(f"❌ Session file corrupted: {e}")
+            os.remove(SESSION_FILE)
+            return False
+        
+        print(f"✅ Session loaded from {SESSION_B64_ENV} ({len(session_data)} bytes)")
+        return True
+    except Exception as e:
+        print(f"❌ Failed to load session: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 
 def export_session_to_b64() -> Optional[str]:
@@ -266,10 +271,14 @@ async def run_checks(urls: List[str], output_file: Optional[str] = None):
         return []
     
     # Try to load session from env
-    load_session_from_env()
+    session_loaded = load_session_from_env()
     
     if not os.path.exists(SESSION_FILE):
-        print("❌ No session file. Run --setup first")
+        if not session_loaded:
+            print(f"❌ Failed to load session from {SESSION_B64_ENV}")
+            print(f"   Check that the secret is set in GitHub Actions")
+        else:
+            print("❌ No session file. Run --setup first")
         return []
     
     results = []

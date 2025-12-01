@@ -50,6 +50,10 @@ jobs:
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
           TELEGRAM_SESSION_B64: ${{ secrets.TELEGRAM_SESSION_B64 }}
         run: |
+          echo "🔍 Validating Telegram secrets..."
+          if [ -z "$TELEGRAM_API_ID" ]; then echo "❌ TELEGRAM_API_ID not set"; fi
+          if [ -z "$TELEGRAM_API_HASH" ]; then echo "❌ TELEGRAM_API_HASH not set"; fi
+          if [ -z "$TELEGRAM_SESSION_B64" ]; then echo "❌ TELEGRAM_SESSION_B64 not set"; else echo "✅ TELEGRAM_SESSION_B64 is set (${#TELEGRAM_SESSION_B64} chars)"; fi
           python3 telegram_monitor.py --check telegram_threat_actors.md || true
           python3 telegram_monitor.py --check telegram_infostealer.md || true
           python3 telegram_monitor.py --check others.md || true
