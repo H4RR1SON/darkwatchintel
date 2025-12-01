@@ -350,6 +350,12 @@ def update_markdown_with_results(filepath: str, results: List[Dict]) -> int:
     updated_count = 0
     new_lines = []
     
+    # Detect if file has Members column (4+ columns in header)
+    has_members_column = False
+    if lines and '|' in lines[0]:
+        header_parts = lines[0].split('|')
+        has_members_column = len(header_parts) >= 5  # empty, URL, Status, Members, Name, empty
+    
     for line in lines:
         # Check if this line contains a Telegram URL
         url_match = re.search(r'(https?://t\.me/[^\s\)\]|>]+)', line)
@@ -358,6 +364,7 @@ def update_markdown_with_results(filepath: str, results: List[Dict]) -> int:
             if url in results_map:
                 result = results_map[url]
                 status = result.get('status', 'UNKNOWN')
+                members = result.get('members')
                 
                 # Map status to emoji format
                 status_map = {
@@ -371,15 +378,34 @@ def update_markdown_with_results(filepath: str, results: List[Dict]) -> int:
                 }
                 new_status = status_map.get(status, f'⚪ {status}')
                 
-                # Update status in line (between first two pipes after URL)
+                # Update status and members in line
                 parts = line.split('|')
-                if len(parts) >= 3:
-                    # parts[0] is empty, parts[1] is URL, parts[2] is status
+                changed = False
+                
+                if has_members_column and len(parts) >= 5:
+                    # Format: | URL | Status | Members | Name |
                     old_status = parts[2].strip()
                     if old_status != new_status:
                         parts[2] = f' {new_status} '
-                        line = '|'.join(parts)
-                        updated_count += 1
+                        changed = True
+                    
+                    # Update members count
+                    if members:
+                        members_str = f' {members:,} '
+                        if parts[3].strip() != members_str.strip():
+                            parts[3] = members_str
+                            changed = True
+                    
+                elif len(parts) >= 3:
+                    # Format: | URL | Status | Name |
+                    old_status = parts[2].strip()
+                    if old_status != new_status:
+                        parts[2] = f' {new_status} '
+                        changed = True
+                
+                if changed:
+                    line = '|'.join(parts)
+                    updated_count += 1
         
         new_lines.append(line)
     
