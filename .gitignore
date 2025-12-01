@@ -2,3 +2,7 @@
 *.session
 __pycache__/
 *.pyc
+SESSION_B64.txt
+GITHUB_SECRETS_SETUP.md
+.git-rewrite/
+backup-refs*
