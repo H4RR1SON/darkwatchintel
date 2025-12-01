@@ -29,7 +29,14 @@ try:
     from telethon.tl.functions.messages import CheckChatInviteRequest
     from telethon.tl.functions.channels import GetFullChannelRequest
     from telethon.tl.types import ChatInviteAlready, ChatInvite
-    from telethon.errors import InviteHashExpiredError, InviteHashInvalidError, FloodWaitError
+    from telethon.errors import (
+        ChannelPrivateError,
+        FloodWaitError,
+        InviteHashExpiredError,
+        InviteHashInvalidError,
+        UsernameInvalidError,
+        UsernameNotOccupiedError,
+    )
     TELETHON_AVAILABLE = True
 except ImportError:
     TELETHON_AVAILABLE = False
@@ -47,24 +54,39 @@ SESSION_B64_ENV = 'TELEGRAM_SESSION_B64'
 CHECK_DELAY = 2  # seconds between checks to avoid flood
 
 
+def normalize_telegram_url(url: str) -> str:
+    """Normalize Telegram URLs so matching against markdown is reliable"""
+    cleaned = url.strip()
+    cleaned = re.sub(r'^http://', 'https://', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'^(https?://)?(telegram\.me)', r'https://t.me', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'^(https?://)?(t\.me)', r'https://t.me', cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.rstrip('/')
+    return cleaned
+
+
 def parse_telegram_url(url: str) -> Tuple[Optional[str], Optional[str]]:
     """
     Parse Telegram URL and return (type, identifier)
-    Types: 'channel', 'invite', 'bot'
+    Types: 'channel', 'invite', 'private', 'bot'
     """
-    url = url.strip()
-    
+    url = normalize_telegram_url(url)
+
     # Private invite link: t.me/+XXXXX or t.me/joinchat/XXXXX
-    invite_match = re.search(r't\.me/\+([a-zA-Z0-9_-]+)', url)
+    invite_match = re.search(r't\.me/\+([a-zA-Z0-9_-]+)', url, re.IGNORECASE)
     if invite_match:
         return 'invite', invite_match.group(1)
     
-    invite_match = re.search(r't\.me/joinchat/([a-zA-Z0-9_-]+)', url)
+    invite_match = re.search(r't\.me/joinchat/([a-zA-Z0-9_-]+)', url, re.IGNORECASE)
     if invite_match:
         return 'invite', invite_match.group(1)
+
+    # Private message link: t.me/c/<chat_id>/<message_id>
+    private_match = re.search(r't\.me/c/(\d+)/\d+', url, re.IGNORECASE)
+    if private_match:
+        return 'private', private_match.group(1)
     
     # Public channel/group: t.me/channelname
-    channel_match = re.search(r't\.me/([a-zA-Z0-9_]+)(?:\?|$|/)', url)
+    channel_match = re.search(r't\.me/([a-zA-Z0-9_]+)(?:\?|$|/)', url, re.IGNORECASE)
     if channel_match:
         username = channel_match.group(1)
         if username.lower() not in ['joinchat', 'addstickers', 'share']:
@@ -517,4 +539,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

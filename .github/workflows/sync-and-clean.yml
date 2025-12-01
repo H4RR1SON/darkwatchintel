@@ -40,6 +40,20 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Install dependencies
+        run: |
+          pip install telethon
+
+      - name: Check Telegram channels
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+          TELEGRAM_SESSION_B64: ${{ secrets.TELEGRAM_SESSION_B64 }}
+        run: |
+          python3 telegram_monitor.py --check telegram_threat_actors.md || true
+          python3 telegram_monitor.py --check telegram_infostealer.md || true
+          python3 telegram_monitor.py --check others.md || true
+
       - name: Run CTI Manager
         run: python3 cti_manager.py . --clean --beautify
 
