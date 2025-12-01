@@ -1,6 +1,6 @@
 | Telegram                               | Status    | Threat Actor Name                                  | Type of attacks                                 |
 | -------------------------------------- | --------- | -------------------------------------------------- | ----------------------------------------------- |
-| https://t.me/+63wu1QC3KM04ZTJi         | ⚪ UNKNOWN | Cyber Cossacks                                     |                                                 |
+| https://t.me/+63wu1QC3KM04ZTJi         | 🟡 FLOOD   | Cyber Cossacks                                     |                                                 |
 | https://t.me/+9ETFYLy5Tc1lNzBh         | ⚪ UNKNOWN | Ares private channel                               |                                                 |
 | https://t.me/+_d-aW--RLXszYmU0         | ⚪ UNKNOWN | Openbullet Config Service                          |                                                 |
 | https://t.me/+AAAAAFNLmVP0ZCy51tNOig   | 🟢 VALID   | Forum                                              |                                                 |
