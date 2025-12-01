@@ -51,7 +51,9 @@ SESSION_FILE = f'{SESSION_NAME}.session'
 SESSION_B64_ENV = 'TELEGRAM_SESSION_B64'
 
 # Rate limiting
-CHECK_DELAY = 2  # seconds between checks to avoid flood
+CHECK_DELAY = 5  # seconds between checks to avoid flood
+MAX_FLOOD_WAIT = 300  # max seconds to wait for flood (5 min)
+MAX_RETRIES = 2  # max retries per URL
 
 
 def normalize_telegram_url(url: str) -> str:
@@ -95,7 +97,7 @@ def parse_telegram_url(url: str) -> Tuple[Optional[str], Optional[str]]:
     return None, None
 
 
-async def check_invite_link(client: 'TelegramClient', invite_hash: str) -> Dict:
+async def check_invite_link(client: 'TelegramClient', invite_hash: str, retry: int = 0) -> Dict:
     """Check if an invite link is valid and get info"""
     try:
         result = await client(CheckChatInviteRequest(invite_hash))
@@ -121,14 +123,18 @@ async def check_invite_link(client: 'TelegramClient', invite_hash: str) -> Dict:
     except InviteHashInvalidError:
         return {'status': 'EXPIRED', 'error': 'Invalid invite hash'}
     except FloodWaitError as e:
-        return {'status': 'FLOOD', 'error': f'Rate limited for {e.seconds}s'}
+        if e.seconds <= MAX_FLOOD_WAIT and retry < MAX_RETRIES:
+            print(f"\n  ⏳ Rate limited, waiting {e.seconds}s...", end=" ", flush=True)
+            await asyncio.sleep(e.seconds + 1)
+            return await check_invite_link(client, invite_hash, retry + 1)
+        return {'status': 'FLOOD', 'error': f'Rate limited for {e.seconds}s', 'wait_seconds': e.seconds}
     except Exception as e:
         return {'status': 'ERROR', 'error': str(e)}
     
     return {'status': 'UNKNOWN'}
 
 
-async def check_public_channel(client: 'TelegramClient', username: str) -> Dict:
+async def check_public_channel(client: 'TelegramClient', username: str, retry: int = 0) -> Dict:
     """Get info for a public channel/group"""
     try:
         entity = await client.get_entity(username)
@@ -157,7 +163,11 @@ async def check_public_channel(client: 'TelegramClient', username: str) -> Dict:
             'online_count': getattr(full_chat, 'online_count', None),
         }
     except FloodWaitError as e:
-        return {'status': 'FLOOD', 'error': f'Rate limited for {e.seconds}s'}
+        if e.seconds <= MAX_FLOOD_WAIT and retry < MAX_RETRIES:
+            print(f"\n  ⏳ Rate limited, waiting {e.seconds}s...", end=" ", flush=True)
+            await asyncio.sleep(e.seconds + 1)
+            return await check_public_channel(client, username, retry + 1)
+        return {'status': 'FLOOD', 'error': f'Rate limited for {e.seconds}s', 'wait_seconds': e.seconds}
     except Exception as e:
         error_str = str(e).lower()
         if 'username not occupied' in error_str or 'username invalid' in error_str:
@@ -302,16 +312,25 @@ async def run_checks(urls: List[str], output_file: Optional[str] = None):
             return []
         
         print(f"🔍 Checking {len(urls)} Telegram URLs...")
+        flood_count = 0
         
         for i, url in enumerate(urls):
-            print(f"  [{i+1}/{len(urls)}] {url[:50]}...", end=" ")
+            print(f"  [{i+1}/{len(urls)}] {url[:50]}...", end=" ", flush=True)
             result = await check_telegram_url(client, url)
             results.append(result)
             print(f"→ {result['status']}")
             
             if result['status'] == 'FLOOD':
-                print(f"  ⚠️  Rate limited, stopping")
-                break
+                flood_count += 1
+                wait_time = result.get('wait_seconds', 60)
+                if flood_count >= 3:
+                    print(f"  ⚠️  Too many rate limits ({flood_count}), stopping")
+                    break
+                # Wait extra time after flood
+                print(f"  ⏳ Waiting {wait_time}s before continuing...")
+                await asyncio.sleep(wait_time)
+            else:
+                flood_count = 0  # Reset on success
             
             await asyncio.sleep(CHECK_DELAY)
         
