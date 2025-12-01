@@ -2,9 +2,8 @@ name: Sync and Clean CTI Data
 
 on:
   schedule:
-    # Run daily at 2 AM UTC
     - cron: '0 2 * * *'
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -25,14 +24,16 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Add upstream remote
+      - name: Pull latest changes
+        run: git pull origin main --rebase || true
+
+      - name: Add upstream and fetch
         run: |
           git remote add upstream https://github.com/fastfire/deepdarkCTI.git || true
-
-      - name: Fetch and merge upstream
-        run: |
           git fetch upstream
-          git merge upstream/main --no-edit -X theirs || echo "Merge complete or no changes"
+
+      - name: Merge upstream
+        run: git merge upstream/main --no-edit -X theirs || echo "Already up to date"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -40,21 +41,10 @@ jobs:
           python-version: '3.11'
 
       - name: Run CTI Manager
-        run: |
-          python3 cti_manager.py . --clean --beautify
-
-      - name: Check for changes
-        id: changes
-        run: |
-          git add -A
-          if git diff --staged --quiet; then
-            echo "has_changes=false" >> $GITHUB_OUTPUT
-          else
-            echo "has_changes=true" >> $GITHUB_OUTPUT
-          fi
+        run: python3 cti_manager.py . --clean --beautify
 
       - name: Commit and push
-        if: steps.changes.outputs.has_changes == 'true'
         run: |
-          git commit -m "chore: sync upstream & clean expired entries [automated]"
-          git push origin main
+          git add -A
+          git diff --staged --quiet || git commit -m "chore: sync upstream & clean expired entries [automated]"
+          git push origin main --force-with-lease
