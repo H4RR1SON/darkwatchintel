@@ -137,6 +137,9 @@ async def check_public_channel(client: 'TelegramClient', username: str) -> Dict:
         chat = full.chats[0]
         full_chat = full.full_chat
         
+        # Get linked chat info if available
+        linked_chat_id = getattr(full_chat, 'linked_chat_id', None)
+        
         return {
             'status': 'ONLINE',
             'title': chat.title,
@@ -144,6 +147,14 @@ async def check_public_channel(client: 'TelegramClient', username: str) -> Dict:
             'members': getattr(full_chat, 'participants_count', None),
             'description': getattr(full_chat, 'about', None),
             'is_channel': not getattr(chat, 'megagroup', False),
+            'is_verified': getattr(chat, 'verified', False),
+            'is_scam': getattr(chat, 'scam', False),
+            'is_fake': getattr(chat, 'fake', False),
+            'is_restricted': getattr(chat, 'restricted', False),
+            'linked_chat_id': linked_chat_id,
+            'admins_count': getattr(full_chat, 'admins_count', None),
+            'banned_count': getattr(full_chat, 'banned_count', None),
+            'online_count': getattr(full_chat, 'online_count', None),
         }
     except FloodWaitError as e:
         return {'status': 'FLOOD', 'error': f'Rate limited for {e.seconds}s'}
@@ -350,11 +361,17 @@ def update_markdown_with_results(filepath: str, results: List[Dict]) -> int:
     updated_count = 0
     new_lines = []
     
-    # Detect if file has Members column (4+ columns in header)
-    has_members_column = False
+    # Detect column positions from header
+    status_col = None
+    members_col = None
+    
     if lines and '|' in lines[0]:
-        header_parts = lines[0].split('|')
-        has_members_column = len(header_parts) >= 5  # empty, URL, Status, Members, Name, empty
+        header_parts = [p.strip().lower() for p in lines[0].split('|')]
+        for i, col in enumerate(header_parts):
+            if col == 'status':
+                status_col = i
+            elif col == 'members':
+                members_col = i
     
     for line in lines:
         # Check if this line contains a Telegram URL
@@ -382,25 +399,18 @@ def update_markdown_with_results(filepath: str, results: List[Dict]) -> int:
                 parts = line.split('|')
                 changed = False
                 
-                if has_members_column and len(parts) >= 5:
-                    # Format: | URL | Status | Members | Name |
-                    old_status = parts[2].strip()
+                # Update Status column
+                if status_col and status_col < len(parts):
+                    old_status = parts[status_col].strip()
                     if old_status != new_status:
-                        parts[2] = f' {new_status} '
+                        parts[status_col] = f' {new_status} '
                         changed = True
-                    
-                    # Update members count
-                    if members:
-                        members_str = f' {members:,} '
-                        if parts[3].strip() != members_str.strip():
-                            parts[3] = members_str
-                            changed = True
-                    
-                elif len(parts) >= 3:
-                    # Format: | URL | Status | Name |
-                    old_status = parts[2].strip()
-                    if old_status != new_status:
-                        parts[2] = f' {new_status} '
+                
+                # Update Members column
+                if members_col and members_col < len(parts) and members:
+                    members_str = f' {members:,} '
+                    if parts[members_col].strip() != members_str.strip():
+                        parts[members_col] = members_str
                         changed = True
                 
                 if changed:
@@ -409,9 +419,9 @@ def update_markdown_with_results(filepath: str, results: List[Dict]) -> int:
         
         new_lines.append(line)
     
-    if updated_count > 0:
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.writelines(new_lines)
+    # Always write the file to update members even if status didn't change
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.writelines(new_lines)
     
     return updated_count
 
